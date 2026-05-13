@@ -1,0 +1,12 @@
+services:
+  ocr:
+    build:
+      context: ./services/ocr
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      OCR_LANG: ${OCR_LANG:-es}
+      DEBUG_OCR: ${DEBUG_OCR:-true}
+      # Opcional: mismo valor que OCR_INTERNAL_SECRET en Next (.env.local)
+      OCR_INTERNAL_SECRET: ${OCR_INTERNAL_SECRET:-}
