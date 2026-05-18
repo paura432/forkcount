@@ -34,6 +34,42 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# editor / local scratch
+Untitled
+
+# supabase CLI temp
+supabase/.temp/
+
+# python (global + OCR service)
+.venv/
+venv/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+# OCR local env & caches (explicit — evita git add . masivo)
+services/ocr/.venv/
+services/ocr/**/__pycache__/
+services/ocr/.pytest_cache/
+
+# archives / scratch at repo root
+*.zip
+imd-cost-control-code.zip
 
 # vercel
 .vercel

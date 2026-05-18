@@ -15,12 +15,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoneyEUR, unitLabel } from "@/lib/format";
 import { recipeCostBreakdown, recipeCostSummary } from "@/lib/costs";
+import { defaultRecipeQuantityUnit } from "@/lib/recipe-units";
+import { quantityUnitOptionsForCatalog } from "@/lib/recipe-unit-options";
+import { RecipeCostSummaryBlock } from "@/components/recipes/recipe-cost-summary-block";
 import type { IngredientUnit, RecipeLaborLineResolved } from "@/lib/types";
 import { Plus, Trash2 } from "lucide-react";
 
 const itemSchema = z.object({
   ingredient_id: z.string().uuid("Elige ingrediente"),
   quantity: z.coerce.number().positive(),
+  quantity_unit: z.enum(["g", "kg", "ml", "l", "ud"]),
   ingredient_yield_percentage: z.coerce.number().min(1).max(100),
 });
 
@@ -82,6 +86,7 @@ export function RecipeForm({
               {
                 ingredient_id: ingredients[0].id,
                 quantity: 1,
+                quantity_unit: defaultRecipeQuantityUnit(ingredients[0].unit),
                 ingredient_yield_percentage: 100,
               },
             ]
@@ -109,6 +114,7 @@ export function RecipeForm({
       (Array.isArray(watchedItemsRaw) ? watchedItemsRaw : []) as {
         ingredient_id: string;
         quantity: number;
+        quantity_unit: IngredientUnit;
         ingredient_yield_percentage: number;
       }[],
     [watchedItemsRaw],
@@ -148,7 +154,7 @@ export function RecipeForm({
       watchedItems.map((it) => ({
         ingredient_id: it.ingredient_id,
         quantity: Number(it.quantity) || 0,
-        ingredient_unit: unitById.get(it.ingredient_id) ?? ("g" as IngredientUnit),
+        quantity_unit: it.quantity_unit ?? unitById.get(it.ingredient_id) ?? "g",
         ingredient_yield_percentage:
           Number(it.ingredient_yield_percentage) || 100,
       })),
@@ -239,6 +245,7 @@ export function RecipeForm({
             {
               ingredient_id: ingredients[0]!.id,
               quantity: 1,
+              quantity_unit: defaultRecipeQuantityUnit(ingredients[0]!.unit),
               ingredient_yield_percentage: 100,
             },
           ],
@@ -306,6 +313,7 @@ export function RecipeForm({
               append({
                 ingredient_id: ingredients[0]!.id,
                 quantity: 1,
+                quantity_unit: defaultRecipeQuantityUnit(ingredients[0]!.unit),
                 ingredient_yield_percentage: 100,
               })
             }
@@ -319,6 +327,11 @@ export function RecipeForm({
             const ingId = watchedItems[index]?.ingredient_id;
             const ing = ingredients.find((i) => i.id === ingId);
             const bdLine = breakdown.lines[index];
+            const catalogUnit = ing?.unit ?? "g";
+            const unitOpts = quantityUnitOptionsForCatalog(catalogUnit);
+            const lastPrice = ingId ? priceMap[ingId] : undefined;
+            const lineNaive =
+              bdLine?.line_cost_naive != null ? formatMoneyEUR(bdLine.line_cost_naive) : "—";
             const lineFinal =
               bdLine?.line_cost != null ? formatMoneyEUR(bdLine.line_cost) : "—";
             return (
@@ -326,11 +339,21 @@ export function RecipeForm({
                 key={field.id}
                 className="bg-background grid gap-2 rounded-md border p-3 sm:grid-cols-12 sm:items-end"
               >
-                <div className="sm:col-span-4">
+                <div className="sm:col-span-3">
                   <Label className="text-xs">Ingrediente</Label>
                   <select
                     className="border-input mt-1 flex min-h-11 w-full rounded-lg border px-2 text-sm"
-                    {...form.register(`items.${index}.ingredient_id`)}
+                    {...form.register(`items.${index}.ingredient_id`, {
+                      onChange: (e) => {
+                        const next = ingredients.find((i) => i.id === e.target.value);
+                        if (next) {
+                          form.setValue(
+                            `items.${index}.quantity_unit`,
+                            defaultRecipeQuantityUnit(next.unit),
+                          );
+                        }
+                      },
+                    })}
                   >
                     {ingredients.map((i) => (
                       <option key={i.id} value={i.id}>
@@ -340,7 +363,7 @@ export function RecipeForm({
                   </select>
                 </div>
                 <div className="sm:col-span-2">
-                  <Label className="text-xs">Cantidad ({ing ? unitLabel(ing.unit) : "—"})</Label>
+                  <Label className="text-xs">Cantidad</Label>
                   <Input
                     type="number"
                     step="any"
@@ -348,6 +371,19 @@ export function RecipeForm({
                     className="mt-1 min-h-11"
                     {...form.register(`items.${index}.quantity`)}
                   />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Unidad</Label>
+                  <select
+                    className="border-input mt-1 flex min-h-11 w-full rounded-lg border px-2 text-sm"
+                    {...form.register(`items.${index}.quantity_unit`)}
+                  >
+                    {unitOpts.map((u) => (
+                      <option key={u} value={u}>
+                        {unitLabel(u)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="sm:col-span-2">
                   <Label className="text-xs">Aprovech. %</Label>
@@ -361,8 +397,16 @@ export function RecipeForm({
                   />
                 </div>
                 <div className="sm:col-span-3">
-                  <p className="text-muted-foreground text-xs">Coste línea (con merma)</p>
-                  <p className="mt-2 font-medium tabular-nums">{lineFinal}</p>
+                  <p className="text-muted-foreground text-xs">
+                    Último precio:{" "}
+                    {lastPrice != null
+                      ? `${formatMoneyEUR(lastPrice)}/${unitLabel(catalogUnit)}`
+                      : "Sin precio de compra"}
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Sin merma: <span className="text-foreground tabular-nums">{lineNaive}</span>
+                  </p>
+                  <p className="text-xs font-medium tabular-nums">Con merma: {lineFinal}</p>
                 </div>
                 <div className="flex sm:col-span-1 sm:justify-end">
                   <Button
@@ -392,7 +436,8 @@ export function RecipeForm({
           ) : null}
         </div>
         <p className="text-muted-foreground text-xs">
-          Coste = (minutos / 60) × coste horario del rol.
+          Coste de mano de obra = minutos / 60 × coste horario real (salario + seguros + cargas /
+          horas productivas).
         </p>
         <div className="flex justify-end">
           <Button
@@ -427,7 +472,7 @@ export function RecipeForm({
                 key={lf.id}
                 className="bg-background grid gap-2 rounded-md border p-3 sm:grid-cols-12 sm:items-end"
               >
-                <div className="sm:col-span-4">
+                <div className="sm:col-span-3">
                   <Label className="text-xs">Rol</Label>
                   <select
                     className="border-input mt-1 flex min-h-11 w-full rounded-lg border px-2 text-sm"
@@ -478,92 +523,7 @@ export function RecipeForm({
         </div>
       </section>
 
-      <section className="space-y-3 rounded-lg border bg-card p-4 shadow-sm">
-        <h2 className="text-base font-semibold tracking-tight">Mermas</h2>
-        <p className="text-muted-foreground text-xs">
-          Coste extra frente a cantidad × precio cuando el aprovechamiento es inferior al 100 %.
-        </p>
-        <div className="flex flex-col gap-2">
-          {breakdown.lines.map((line, idx) => {
-            const ing = ingredients.find((i) => i.id === line.ingredient_id);
-            const extra =
-              line.line_cost != null && line.line_cost_naive != null
-                ? line.line_cost - line.line_cost_naive
-                : null;
-            return (
-              <div
-                key={`${line.ingredient_id}-${idx}`}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-sm"
-              >
-                <span className="font-medium">{ing?.name ?? line.ingredient_id}</span>
-                <span className="text-muted-foreground tabular-nums">
-                  {line.ingredient_yield_percentage}% aprovech.
-                </span>
-                <span className="tabular-nums">
-                  Extra: {extra == null ? "—" : formatMoneyEUR(extra)}
-                </span>
-              </div>
-            );
-          })}
-          <div className="flex justify-between border-t pt-2 text-sm font-semibold">
-            <span>Total ajuste mermas</span>
-            <span className="tabular-nums">
-              {summary.waste_adjustment_cost == null
-                ? "—"
-                : formatMoneyEUR(summary.waste_adjustment_cost)}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3 rounded-lg border bg-muted/30 p-4">
-        <h2 className="text-base font-semibold tracking-tight">Resumen de costes</h2>
-        <dl className="grid gap-2 text-sm sm:grid-cols-2">
-          <div className="flex justify-between gap-2 sm:col-span-2">
-            <dt className="text-muted-foreground">Materias (con merma)</dt>
-            <dd className="tabular-nums font-medium">
-              {summary.ingredient_cost == null ? "—" : formatMoneyEUR(summary.ingredient_cost)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2 sm:col-span-2">
-            <dt className="text-muted-foreground">Manufactura</dt>
-            <dd className="tabular-nums font-medium">
-              {summary.labor_cost == null ? "—" : formatMoneyEUR(summary.labor_cost)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2 border-t pt-2 sm:col-span-2">
-            <dt className="text-muted-foreground">Coste total receta</dt>
-            <dd className="tabular-nums font-semibold">
-              {summary.total_cost == null ? "—" : formatMoneyEUR(summary.total_cost)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2 sm:col-span-2">
-            <dt className="text-muted-foreground">Coste por ración</dt>
-            <dd className="tabular-nums font-semibold">
-              {summary.cost_per_serving == null ? "—" : formatMoneyEUR(summary.cost_per_serving)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2 sm:col-span-2">
-            <dt className="text-muted-foreground">Margen bruto / ración</dt>
-            <dd className="tabular-nums font-medium">
-              {summary.gross_margin == null ? "—" : formatMoneyEUR(summary.gross_margin)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2 sm:col-span-2">
-            <dt className="text-muted-foreground">% coste alimentario</dt>
-            <dd className="tabular-nums font-medium">
-              {summary.food_cost_percentage == null
-                ? "—"
-                : `${summary.food_cost_percentage.toFixed(1)} %`}
-            </dd>
-          </div>
-        </dl>
-        {summary.missing_ingredient_ids.length > 0 ? (
-          <p className="text-muted-foreground text-xs">
-            Falta precio de compra o hay datos incompletos en alguna línea.
-          </p>
-        ) : null}
-      </section>
+      <RecipeCostSummaryBlock summary={summary} />
 
       <Button type="submit" className="min-h-11 w-full" disabled={pending}>
         {pending ? "Guardando…" : mode === "create" ? "Crear receta" : "Guardar cambios"}

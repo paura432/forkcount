@@ -74,6 +74,8 @@ export function recipeCostBreakdown(
       outLines.push({
         ingredient_id: line.ingredient_id,
         quantity: line.quantity,
+        quantity_unit: line.quantity_unit,
+        ingredient_unit: catalogUnit ?? line.quantity_unit,
         ingredient_yield_percentage: yieldPct,
         unit_price: unitPrice ?? null,
         line_cost_naive: null,
@@ -82,11 +84,13 @@ export function recipeCostBreakdown(
       continue;
     }
 
-    if (!sameFamily(line.ingredient_unit, catalogUnit)) {
+    if (!sameFamily(line.quantity_unit, catalogUnit)) {
       missing.push(line.ingredient_id);
       outLines.push({
         ingredient_id: line.ingredient_id,
         quantity: line.quantity,
+        quantity_unit: line.quantity_unit,
+        ingredient_unit: catalogUnit,
         ingredient_yield_percentage: yieldPct,
         unit_price: unitPrice ?? null,
         line_cost_naive: null,
@@ -96,12 +100,27 @@ export function recipeCostBreakdown(
     }
 
     let qtyInCatalogUnit = line.quantity;
-    if (line.ingredient_unit !== catalogUnit) {
-      qtyInCatalogUnit = convertQuantity(
-        line.quantity,
-        line.ingredient_unit,
-        catalogUnit,
-      );
+    if (line.quantity_unit !== catalogUnit) {
+      try {
+        qtyInCatalogUnit = convertQuantity(
+          line.quantity,
+          line.quantity_unit,
+          catalogUnit,
+        );
+      } catch {
+        missing.push(line.ingredient_id);
+        outLines.push({
+          ingredient_id: line.ingredient_id,
+          quantity: line.quantity,
+          quantity_unit: line.quantity_unit,
+          ingredient_unit: catalogUnit,
+          ingredient_yield_percentage: yieldPct,
+          unit_price: unitPrice ?? null,
+          line_cost_naive: null,
+          line_cost: null,
+        });
+        continue;
+      }
     }
 
     const up = unitPrice ?? null;
@@ -111,6 +130,8 @@ export function recipeCostBreakdown(
     outLines.push({
       ingredient_id: line.ingredient_id,
       quantity: line.quantity,
+      quantity_unit: line.quantity_unit,
+      ingredient_unit: catalogUnit,
       ingredient_yield_percentage: yieldPct,
       unit_price: up,
       line_cost_naive: naive,

@@ -134,16 +134,18 @@ export type RecipeItem = {
   recipe_id: string;
   ingredient_id: string;
   quantity: number;
+  /** Unidad en que se expresa quantity en la receta. */
+  quantity_unit: IngredientUnit;
   /** Porcentaje aprovechable (100 = sin merma). */
   ingredient_yield_percentage: number;
   created_at: string;
 };
 
-/** Línea de receta + unidad del ingrediente (para validar conversiones). */
+/** Línea de receta para cálculo de coste (quantity_unit → unidad catálogo del ingrediente). */
 export type RecipeLineForCost = {
   ingredient_id: string;
   quantity: number;
-  ingredient_unit: IngredientUnit;
+  quantity_unit: IngredientUnit;
   /** Porcentaje aprovechable; default 100 en callers. */
   ingredient_yield_percentage: number;
 };
@@ -157,6 +159,8 @@ export type RecipeLaborLineResolved = {
 export type RecipeCostLine = {
   ingredient_id: string;
   quantity: number;
+  quantity_unit: IngredientUnit;
+  ingredient_unit: IngredientUnit;
   ingredient_yield_percentage: number;
   unit_price: number | null;
   line_cost_naive: number | null;

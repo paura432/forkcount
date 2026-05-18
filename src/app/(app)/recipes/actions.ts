@@ -4,10 +4,16 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getRestaurantId } from "@/lib/auth/restaurant";
+import { INGREDIENT_UNITS, type IngredientUnit } from "@/lib/types";
+import { unitsCompatibleWithIngredient } from "@/lib/recipe-units";
+import { isIngredientUnit } from "@/lib/units";
 
 const itemSchema = z.object({
   ingredient_id: z.string().uuid(),
   quantity: z.coerce.number().positive(),
+  quantity_unit: z
+    .string()
+    .refine((u): u is IngredientUnit => isIngredientUnit(u), "Unidad inválida"),
   ingredient_yield_percentage: z.coerce.number().min(1).max(100),
 });
 
@@ -27,6 +33,33 @@ const recipeSchema = z.object({
 });
 
 export type RecipeActionState = { error?: string; ok?: boolean };
+
+async function validateRecipeItemUnits(
+  items: z.infer<typeof itemSchema>[],
+): Promise<string | null> {
+  const ids = [...new Set(items.map((i) => i.ingredient_id))];
+  if (ids.length === 0) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ingredients")
+    .select("id, unit")
+    .in("id", ids);
+  if (error) return error.message;
+  const unitById = new Map(
+    (data ?? []).map((r) => [r.id, r.unit as IngredientUnit]),
+  );
+  for (const it of items) {
+    const catalog = unitById.get(it.ingredient_id);
+    if (!catalog) return "Ingrediente no encontrado";
+    if (!unitsCompatibleWithIngredient(it.quantity_unit, catalog)) {
+      return `Unidad ${it.quantity_unit} incompatible con el ingrediente`;
+    }
+    if (!(INGREDIENT_UNITS as readonly string[]).includes(it.quantity_unit)) {
+      return "Unidad de línea inválida";
+    }
+  }
+  return null;
+}
 
 function parseSellingPrice(formData: FormData): number | null {
   const raw = formData.get("selling_price");
@@ -69,6 +102,9 @@ export async function createRecipe(
     return { error: parsed.error.issues[0]?.message ?? "Datos inválidos" };
   }
 
+  const unitErr = await validateRecipeItemUnits(parsed.data.items);
+  if (unitErr) return { error: unitErr };
+
   const restaurant_id = await getRestaurantId();
   const supabase = await createClient();
 
@@ -90,6 +126,7 @@ export async function createRecipe(
     recipe_id: recipe.id,
     ingredient_id: it.ingredient_id,
     quantity: it.quantity,
+    quantity_unit: it.quantity_unit,
     ingredient_yield_percentage: it.ingredient_yield_percentage,
   }));
 
@@ -151,6 +188,9 @@ export async function updateRecipe(
   });
   if (!id || !parsed.success) return { error: "Datos inválidos" };
 
+  const unitErr = await validateRecipeItemUnits(parsed.data.items);
+  if (unitErr) return { error: unitErr };
+
   const supabase = await createClient();
 
   const { error: uErr } = await supabase
@@ -172,6 +212,7 @@ export async function updateRecipe(
     recipe_id: id,
     ingredient_id: it.ingredient_id,
     quantity: it.quantity,
+    quantity_unit: it.quantity_unit,
     ingredient_yield_percentage: it.ingredient_yield_percentage,
   }));
 

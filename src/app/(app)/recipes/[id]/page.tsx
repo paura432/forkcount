@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getRestaurantId } from "@/lib/auth/restaurant";
+import { buildRecipeCostSummary } from "@/lib/recipe-cost-build";
+import { recipeCostBreakdown } from "@/lib/costs";
+import { RecipeEscandalloSheet } from "@/components/recipes/recipe-escandallo-sheet";
 import { RecipeForm } from "../recipe-form";
 import type { Ingredient } from "@/types/ingredient";
+import type { IngredientUnit, LatestUnitPriceRow } from "@/lib/types";
 import type { LaborRole } from "@/types/recipe";
-import type { LatestUnitPriceRow } from "@/types/purchase";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +24,9 @@ export default async function RecipeDetailPage({
   const { data: recipe, error: recErr } = await supabase
     .from("recipes")
     .select(
-      "id, name, description, servings, selling_price, recipe_items(ingredient_id, quantity, ingredient_yield_percentage), recipe_labor_items(labor_role_id, minutes, notes)"
+      `id, name, description, servings, selling_price,
+      recipe_items(ingredient_id, quantity, quantity_unit, ingredient_yield_percentage),
+      recipe_labor_items(labor_role_id, minutes, notes)`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -39,21 +44,41 @@ export default async function RecipeDetailPage({
     return <p className="text-destructive text-sm">Error: {msg}</p>;
   }
 
+  const ingredients = (ingRes.data ?? []) as Ingredient[];
+  const unitById = new Map(ingredients.map((i) => [i.id, i.unit]));
   const priceRows = (pricesRes.data ?? []) as LatestUnitPriceRow[];
   const priceMap = Object.fromEntries(
-    priceRows.map((p) => [p.ingredient_id, Number(p.unit_price)])
+    priceRows.map((p) => [p.ingredient_id, Number(p.unit_price)]),
+  );
+  const priceById = new Map(
+    priceRows.map((p) => [p.ingredient_id, Number(p.unit_price)]),
   );
 
-  const items = (recipe.recipe_items ?? []) as {
-    ingredient_id: string;
-    quantity: number;
-    ingredient_yield_percentage?: number;
-  }[];
-  const laborRows = (recipe.recipe_labor_items ?? []) as {
-    labor_role_id: string;
-    minutes: number;
-    notes: string | null;
-  }[];
+  const items = (recipe.recipe_items ?? []).map((it) => {
+    const catalog = unitById.get(it.ingredient_id) ?? "g";
+    const qUnit = (it.quantity_unit ?? catalog) as IngredientUnit;
+    return {
+      ingredient_id: it.ingredient_id,
+      quantity: Number(it.quantity),
+      quantity_unit: qUnit,
+      ingredient_yield_percentage:
+        it.ingredient_yield_percentage != null
+          ? Number(it.ingredient_yield_percentage)
+          : 100,
+    };
+  });
+
+  const laborRows = (recipe.recipe_labor_items ?? []).map((r) => ({
+    labor_role_id: r.labor_role_id,
+    minutes: Number(r.minutes),
+    notes: r.notes ?? null,
+  }));
+
+  const laborRoles = ((laborRes.data ?? []) as LaborRole[]).map((r) => ({
+    ...r,
+    hourly_cost: Number(r.hourly_cost),
+  }));
+  const laborHourly = new Map(laborRoles.map((r) => [r.id, r.hourly_cost]));
 
   const servings = Number(recipe.servings) >= 1 ? Number(recipe.servings) : 1;
   const selling =
@@ -61,13 +86,29 @@ export default async function RecipeDetailPage({
       ? Number(recipe.selling_price)
       : null;
 
-  const laborRoles = ((laborRes.data ?? []) as LaborRole[]).map((r) => ({
-    ...r,
-    hourly_cost: Number(r.hourly_cost),
+  const linesForCost = items.map((it) => ({
+    ingredient_id: it.ingredient_id,
+    quantity: it.quantity,
+    quantity_unit: it.quantity_unit,
+    ingredient_yield_percentage: it.ingredient_yield_percentage,
   }));
 
+  const breakdown = recipeCostBreakdown(linesForCost, unitById, priceById);
+  const summary = buildRecipeCostSummary({
+    items,
+    labor: laborRows.map((r) => ({
+      labor_role_id: r.labor_role_id,
+      minutes: r.minutes,
+    })),
+    ingredientUnitById: unitById,
+    unitPriceByIngredientId: priceById,
+    laborHourlyByRoleId: laborHourly,
+    servings,
+    selling_price: selling,
+  });
+
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-8">
       <div>
         <Link
           href="/recipes"
@@ -78,34 +119,46 @@ export default async function RecipeDetailPage({
         <p className="text-muted-foreground mt-1 text-sm font-medium">{recipe.name}</p>
       </div>
 
-      <RecipeForm
-        key={recipe.id}
-        ingredients={(ingRes.data ?? []) as Ingredient[]}
-        priceMap={priceMap}
+      <RecipeEscandalloSheet
+        recipeName={recipe.name}
+        servings={servings}
+        sellingPrice={selling}
+        ingredients={ingredients}
+        breakdown={breakdown}
+        summary={summary}
+        laborRows={laborRows}
         laborRoles={laborRoles}
-        mode="edit"
-        recipeId={recipe.id}
-        defaultValues={{
-          name: recipe.name,
-          description: recipe.description ?? "",
-          servings,
-          selling_price:
-            selling != null && Number.isFinite(selling) ? String(selling) : "",
-          items: items.map((it) => ({
-            ingredient_id: it.ingredient_id,
-            quantity: Number(it.quantity),
-            ingredient_yield_percentage:
-              it.ingredient_yield_percentage != null
-                ? Number(it.ingredient_yield_percentage)
-                : 100,
-          })),
-          labor: laborRows.map((r) => ({
-            labor_role_id: r.labor_role_id,
-            minutes: Number(r.minutes),
-            notes: r.notes ?? "",
-          })),
-        }}
       />
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Editar receta</h2>
+        <RecipeForm
+          key={recipe.id}
+          ingredients={ingredients}
+          priceMap={priceMap}
+          laborRoles={laborRoles}
+          mode="edit"
+          recipeId={recipe.id}
+          defaultValues={{
+            name: recipe.name,
+            description: recipe.description ?? "",
+            servings,
+            selling_price:
+              selling != null && Number.isFinite(selling) ? String(selling) : "",
+            items: items.map((it) => ({
+              ingredient_id: it.ingredient_id,
+              quantity: it.quantity,
+              quantity_unit: it.quantity_unit,
+              ingredient_yield_percentage: it.ingredient_yield_percentage,
+            })),
+            labor: laborRows.map((r) => ({
+              labor_role_id: r.labor_role_id,
+              minutes: r.minutes,
+              notes: r.notes ?? "",
+            })),
+          }}
+        />
+      </section>
     </div>
   );
 }

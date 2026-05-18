@@ -5,6 +5,7 @@ Tolerant to OCR noise: €, @, extra integers, 3-digit money fractions.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from itertools import combinations
@@ -15,6 +16,7 @@ from .row_grouping import RowInfo
 from .spanish_numbers import (
     OcrMoneyParse,
     OcrQuantityParse,
+    extract_leading_digit_run,
     parse_money_token_ocr,
     parse_quantity_token_ocr,
 )
@@ -138,13 +140,71 @@ def _collect_numeric_tokens(parts: list[str]) -> list[_NumTok]:
     return out
 
 
+def _coherence_tol(reference: float) -> float:
+    return max(0.025, 0.02 * max(abs(reference), 1.0))
+
+
+def _coherence_err(q: float, p: float, t: float) -> float:
+    return abs(q * p - t)
+
+
 def _coherence_score(q: float, p: float, t: float) -> float:
     implied = q * p
     err = abs(implied - t)
-    tol = max(0.025, 0.02 * max(abs(t), 1.0))
+    tol = _coherence_tol(max(abs(t), abs(implied), 1.0))
     if err <= tol:
         return 2000.0 - err * 80.0
     return 400.0 - min(err, 8000.0)
+
+
+def _token_looks_integer_no_decimal(token: str) -> bool:
+    """OCR money run without '.' or ',' — e.g. 12640 instead of 126.40."""
+    raw = extract_leading_digit_run(token)
+    if not raw:
+        return False
+    return "." not in raw and "," not in raw
+
+
+def _floor_cents(v: float) -> float:
+    return math.floor(v * 100 + 1e-9) / 100
+
+
+def _try_infer_scaled_line_total(
+    q: float,
+    p: float,
+    tv: float,
+    total_token: str,
+) -> tuple[float, bool]:
+    """
+    When OCR drops the decimal separator (12640 -> 126.40), try /10…/10000 only if
+    quantity × unit_price coheres much better than the literal integer.
+    """
+    if not _token_looks_integer_no_decimal(total_token):
+        return tv, False
+
+    implied = q * p
+    tol = _coherence_tol(max(abs(implied), abs(tv), 1.0))
+    err_orig = _coherence_err(q, p, tv)
+    if err_orig <= tol:
+        return tv, False
+
+    best_tv = tv
+    best_err = err_orig
+    inferred = False
+
+    for div in (10, 100, 1000, 10000):
+        candidate = _floor_cents(tv / div)
+        if not _plausible_line_total(candidate):
+            continue
+        err = _coherence_err(q, p, candidate)
+        if err <= tol and err + 1e-9 < best_err:
+            best_tv = candidate
+            best_err = err
+            inferred = True
+
+    if not inferred:
+        return tv, False
+    return best_tv, True
 
 
 def _raw_name_suspicious(name: str) -> bool:
@@ -194,7 +254,8 @@ def parse_delivery_note_line(
         if qv <= 0 or pv < 0 or tv < 0:
             continue
 
-        sc = _coherence_score(qv, pv, tv)
+        tv_for_score, _ = _try_infer_scaled_line_total(qv, pv, tv, parts[c.ti])
+        sc = _coherence_score(qv, pv, tv_for_score)
         trailing = 0
         for tok in parts[c.ti + 1 :]:
             if parse_money_token_ocr(tok) or parse_quantity_token_ocr(tok):
@@ -214,14 +275,16 @@ def parse_delivery_note_line(
     if best is None:
         return None
 
-    qv, pv, tv, ti_a, _ti_b, _ti_c, ag_q, ag_p, ag_t, extra_after, _ntrail = best
+    qv, pv, tv, ti_a, _ti_b, ti_c, ag_q, ag_p, ag_t, extra_after, _ntrail = best
     raw_name = " ".join(parts[:ti_a]).strip()
     if not raw_name or _raw_name_suspicious(raw_name):
         return None
 
+    tv, inferred_total = _try_infer_scaled_line_total(qv, pv, tv, parts[ti_c])
+
     implied = qv * pv
-    err = abs(implied - tv)
-    tol = max(0.025, 0.02 * max(abs(tv), 1.0))
+    err = _coherence_err(qv, pv, tv)
+    tol = _coherence_tol(max(abs(tv), abs(implied), 1.0))
     math_review = err > tol
     conf = _line_confidence(row)
     low_conf = row is not None and conf < 0.5
@@ -231,6 +294,7 @@ def parse_delivery_note_line(
         or ag_q
         or ag_p
         or ag_t
+        or inferred_total
         or extra_after
         or low_conf
     )

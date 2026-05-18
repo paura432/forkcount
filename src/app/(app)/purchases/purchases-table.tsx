@@ -48,7 +48,13 @@ function supplierName(s: SupplierRel): string {
   return Array.isArray(s) ? (s[0]?.name ?? "—") : s.name;
 }
 
-export function PurchasesTable({ rows }: { rows: Row[] }) {
+export function PurchasesTable({
+  rows,
+  pendingByPurchase = {},
+}: {
+  rows: Row[];
+  pendingByPurchase?: Record<string, number>;
+}) {
   return (
     <div className="flex flex-col gap-3">
       <h2 className="text-lg font-semibold">Historial</h2>
@@ -73,10 +79,22 @@ export function PurchasesTable({ rows }: { rows: Row[] }) {
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((r) => (
+              rows.map((r) => {
+                const pending = pendingByPurchase[r.id] ?? 0;
+                return (
                 <TableRow key={r.id}>
                   <TableCell className="whitespace-nowrap">{r.purchase_date}</TableCell>
-                  <TableCell>{supplierName(r.suppliers)}</TableCell>
+                  <TableCell>
+                    <span className="flex flex-col gap-0.5">
+                      <span>{supplierName(r.suppliers)}</span>
+                      {pending > 0 ? (
+                        <span className="text-muted-foreground text-xs">
+                          {pending} producto{pending === 1 ? "" : "s"} pendiente
+                          {pending === 1 ? "" : "s"} de asociar
+                        </span>
+                      ) : null}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <span className="text-sm">{DOC_LABEL[r.document_type]}</span>
                     {r.document_number ? (
@@ -114,7 +132,8 @@ export function PurchasesTable({ rows }: { rows: Row[] }) {
                     </Link>
                   </TableCell>
                 </TableRow>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>
@@ -125,12 +144,20 @@ export function PurchasesTable({ rows }: { rows: Row[] }) {
         {rows.length === 0 ? (
           <p className="text-muted-foreground py-6 text-center text-sm">Sin compras.</p>
         ) : (
-          rows.map((r) => (
+          rows.map((r) => {
+            const pending = pendingByPurchase[r.id] ?? 0;
+            return (
             <Link key={r.id} href={`/purchases/${r.id}`} className="block">
               <Card className="transition-colors hover:bg-muted/40">
                 <CardContent className="flex flex-col gap-1 p-4 text-sm">
                   <p className="font-medium">{r.purchase_date}</p>
                   <p className="text-muted-foreground">{supplierName(r.suppliers)}</p>
+                  {pending > 0 ? (
+                    <p className="text-muted-foreground text-xs">
+                      {pending} producto{pending === 1 ? "" : "s"} pendiente
+                      {pending === 1 ? "" : "s"} de asociar
+                    </p>
+                  ) : null}
                   <p className="flex flex-wrap items-center gap-2">
                     <span>{DOC_LABEL[r.document_type]}</span>
                     <Badge variant={r.status === "confirmed" ? "secondary" : "outline"} className="text-xs">
@@ -159,7 +186,8 @@ export function PurchasesTable({ rows }: { rows: Row[] }) {
                 </CardContent>
               </Card>
             </Link>
-          ))
+            );
+          })
         )}
       </div>
     </div>

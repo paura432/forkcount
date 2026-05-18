@@ -44,6 +44,11 @@ import { formatMoneyEUR, unitLabel } from "@/lib/format";
 import { Plus, Trash2, Camera, ImagePlus, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OcrWarningsBanner } from "@/components/purchases/ocr-warnings-banner";
+import {
+  normalizeSupplierProductName,
+  selectSupplierProductMapping,
+  type SupplierProductMappingLookup,
+} from "@/lib/supplier-product-mapping";
 
 const DOCUMENT_LABELS: Record<PurchaseDocumentType, string> = {
   invoice: "Factura",
@@ -135,14 +140,36 @@ function defaultLine(): FormValues["lines"][number] {
   };
 }
 
-function mapOcrItemToLine(item: ExtractedPurchaseItem, ingredients: Ingredient[]): FormValues["lines"][number] {
+function applySupplierMappingToLine(
+  line: FormValues["lines"][number],
+  mappings: SupplierProductMappingLookup[],
+  supplierId: string,
+): FormValues["lines"][number] {
+  if (line.ingredient_id?.trim() || !supplierId) return line;
+  const raw = line.raw_name?.trim();
+  if (!raw) return line;
+  const hit = selectSupplierProductMapping(
+    mappings,
+    supplierId,
+    normalizeSupplierProductName(raw),
+  );
+  if (!hit) return line;
+  return { ...line, ingredient_id: hit.ingredient_id };
+}
+
+function mapOcrItemToLine(
+  item: ExtractedPurchaseItem,
+  ingredients: Ingredient[],
+  mappings: SupplierProductMappingLookup[],
+  supplierId: string,
+): FormValues["lines"][number] {
   const sug = item.suggested_ingredient_name?.trim();
   let ingredient_id = "";
   if (sug) {
     const m = ingredients.find((i) => i.name.trim().toLowerCase() === sug.toLowerCase());
     if (m) ingredient_id = m.id;
   }
-  return {
+  const base: FormValues["lines"][number] = {
     raw_name: item.raw_name?.trim() || "",
     ingredient_id,
     quantity: item.quantity,
@@ -151,6 +178,7 @@ function mapOcrItemToLine(item: ExtractedPurchaseItem, ingredients: Ingredient[]
     total_price: item.total_price,
     needs_review: item.needs_review,
   };
+  return applySupplierMappingToLine(base, mappings, supplierId);
 }
 
 function applyOcrDocumentToForm(d: NormalizedOcrExtraction["document"], setValue: UseFormSetValue<FormValues>) {
@@ -172,9 +200,11 @@ function applyOcrDocumentToForm(d: NormalizedOcrExtraction["document"], setValue
 export function PurchaseForm({
   suppliers,
   ingredients,
+  productMappings = [],
 }: {
   suppliers: Supplier[];
   ingredients: Ingredient[];
+  productMappings?: SupplierProductMappingLookup[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -366,8 +396,11 @@ export function PurchaseForm({
         const items = normalized.items;
         const recon = normalized.reconstructed_lines ?? [];
         const reconHasText = recon.some((l) => l.trim().length > 0);
+        const sid = form.getValues("supplier_id");
         const nextLines =
-          items.length > 0 ? items.map((it) => mapOcrItemToLine(it, ingredients)) : [defaultLine()];
+          items.length > 0
+            ? items.map((it) => mapOcrItemToLine(it, ingredients, productMappings, sid))
+            : [defaultLine()];
         replace(nextLines);
 
         if (items.length > 0) {
@@ -707,6 +740,11 @@ export function PurchaseForm({
                                   Revisar
                                 </span>
                               ) : null}
+                              {!lineValues[index]?.ingredient_id?.trim() ? (
+                                <span className="w-fit rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                  Producto sin asociar
+                                </span>
+                              ) : null}
                               <Input
                                 className="min-h-10"
                                 placeholder="Ej. Lubina"
@@ -787,6 +825,11 @@ export function PurchaseForm({
                           {lineValues[index]?.needs_review ? (
                             <span className="w-fit rounded bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-950 dark:text-amber-100">
                               Revisar
+                            </span>
+                          ) : null}
+                          {!lineValues[index]?.ingredient_id?.trim() ? (
+                            <span className="w-fit rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                              Producto sin asociar
                             </span>
                           ) : null}
                         </div>

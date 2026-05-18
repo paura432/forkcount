@@ -8,13 +8,16 @@ import { buttonVariants } from "@/components/ui/button";
 export default async function NewPurchasePage() {
   const supabase = await createClient();
 
-  const [supRes, ingRes] = await Promise.all([
+  const [supRes, ingRes, mapRes] = await Promise.all([
     supabase.from("suppliers").select("*").order("name"),
     supabase.from("ingredients").select("*").order("name"),
+    supabase
+      .from("supplier_product_mappings")
+      .select("supplier_id, normalized_raw_name, ingredient_id"),
   ]);
 
-  if (supRes.error || ingRes.error) {
-    const msg = supRes.error?.message ?? ingRes.error?.message;
+  if (supRes.error || ingRes.error || mapRes.error) {
+    const msg = supRes.error?.message ?? ingRes.error?.message ?? mapRes.error?.message;
     return <p className="text-destructive text-sm">Error: {msg}</p>;
   }
 
@@ -31,6 +34,7 @@ export default async function NewPurchasePage() {
       <PurchaseForm
         suppliers={(supRes.data ?? []) as Supplier[]}
         ingredients={(ingRes.data ?? []) as Ingredient[]}
+        productMappings={mapRes.data ?? []}
       />
     </div>
   );

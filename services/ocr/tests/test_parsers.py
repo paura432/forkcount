@@ -122,3 +122,33 @@ def test_money_zero_006_tiny():
     assert m is not None
     assert m.value == pytest.approx(0.0)
     assert m.tiny_or_dubious is True
+
+
+def test_parse_mero_integer_cents_12640():
+    it = parse_delivery_note_line("MERO 3,200 39.50€ 12640", row=None)
+    assert it is not None
+    assert it.raw_name == "MERO"
+    assert it.quantity == pytest.approx(3.2)
+    assert it.unit_price == pytest.approx(39.5)
+    assert it.total_price == pytest.approx(126.4)
+    assert it.needs_review is True
+
+
+def test_parse_mero_integer_no_separator_126406():
+    it = parse_delivery_note_line("MERO 3,200 39.50€ 126406", row=None)
+    assert it is not None
+    assert it.raw_name == "MERO"
+    assert it.quantity == pytest.approx(3.2)
+    assert it.unit_price == pytest.approx(39.5)
+    assert it.total_price == pytest.approx(126.4)
+    assert it.needs_review is True
+
+
+def test_parse_lubina_integer_total_with_trailing_noise():
+    it = parse_delivery_note_line("LUBINA 10,300 32.00€ 32960 1127", row=None)
+    assert it is not None
+    assert it.raw_name == "LUBINA"
+    assert it.quantity == pytest.approx(10.3)
+    assert it.unit_price == pytest.approx(32.0)
+    assert it.total_price == pytest.approx(329.6)
+    assert it.needs_review is True

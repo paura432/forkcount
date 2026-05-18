@@ -15,6 +15,31 @@ function isPurchaseDocumentType(v: string): v is PurchaseDocumentType {
   return (PURCHASE_DOCUMENT_TYPES as readonly string[]).includes(v);
 }
 
+function ocrUpstreamDetail(json: unknown, fallback: string): string {
+  const errObj = json && typeof json === "object" && json !== null ? (json as Record<string, unknown>) : null;
+  if (errObj && typeof errObj.error === "string" && errObj.error.length > 0) {
+    return errObj.error;
+  }
+  if (errObj && "detail" in errObj) {
+    const rawDetail = errObj.detail;
+    return typeof rawDetail === "string"
+      ? rawDetail
+      : JSON.stringify(rawDetail ?? "").slice(0, 2000);
+  }
+  return fallback;
+}
+
+function ocrServiceErrorResponse(status: number, json: unknown) {
+  const detail = ocrUpstreamDetail(json, status === 401 ? "Unauthorized" : "Error");
+  return NextResponse.json(
+    {
+      error: `OCR service returned ${status}: ${detail}`,
+      ocr_status: status,
+    },
+    { status: 502 },
+  );
+}
+
 async function getImageBytesAndName(
   supabase: Awaited<ReturnType<typeof createClient>>,
   restaurantId: string,
@@ -118,29 +143,28 @@ export async function POST(request: Request) {
     });
     json = await ocrRes.json().catch(() => null);
     if (!ocrRes.ok) {
-      const errObj = json && typeof json === "object" && json !== null ? (json as Record<string, unknown>) : null;
-      let detail: string;
-      if (errObj && typeof errObj.error === "string" && errObj.error.length > 0) {
-        detail = errObj.error;
-      } else if (errObj && "detail" in errObj) {
-        const rawDetail = errObj.detail;
-        detail =
-          typeof rawDetail === "string"
-            ? rawDetail
-            : JSON.stringify(rawDetail ?? "").slice(0, 2000);
-      } else {
-        detail = ocrRes.statusText;
-      }
-      return NextResponse.json({ error: detail }, { status: 502 });
+      return ocrServiceErrorResponse(ocrRes.status, json);
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error de red al llamar al OCR";
-    return NextResponse.json({ error: msg }, { status: 502 });
+    return NextResponse.json(
+      {
+        error: `OCR service unreachable: ${msg}`,
+        ocr_status: null,
+      },
+      { status: 502 },
+    );
   }
 
   const normalized = parseOcrHttpResponse(json);
   if (!normalized) {
-    return NextResponse.json({ error: "Respuesta OCR inválida" }, { status: 502 });
+    return NextResponse.json(
+      {
+        error: "OCR service returned invalid JSON (missing text/lines/items)",
+        ocr_status: 200,
+      },
+      { status: 502 },
+    );
   }
 
   const body: Record<string, unknown> = {

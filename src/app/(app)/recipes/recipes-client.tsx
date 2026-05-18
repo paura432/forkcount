@@ -32,7 +32,9 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { formatMoneyEUR } from "@/lib/format";
+import type { RecipeProfitabilityStatus } from "@/lib/recipe-profitability";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2 } from "lucide-react";
 
 export type RecipeListRow = {
@@ -40,10 +42,35 @@ export type RecipeListRow = {
   name: string;
   description: string | null;
   servings: number;
+  selling_price: number | null;
   cost: number | null;
   costPerServing: number | null;
-  recipe_items: { ingredient_id: string; quantity: number }[];
+  grossMargin: number | null;
+  foodCostPct: number | null;
+  status: RecipeProfitabilityStatus;
+  statusLabel: string;
+  recipe_items: {
+    ingredient_id: string;
+    quantity: number;
+    quantity_unit: string;
+    ingredient_yield_percentage: number;
+  }[];
 };
+
+function statusVariant(
+  status: RecipeProfitabilityStatus,
+): "secondary" | "outline" | "default" | "destructive" {
+  switch (status) {
+    case "profitable":
+      return "default";
+    case "tight_margin":
+      return "destructive";
+    case "no_prices":
+      return "outline";
+    default:
+      return "secondary";
+  }
+}
 
 export function RecipesClient({
   recipes,
@@ -93,24 +120,53 @@ export function RecipesClient({
         ),
       },
       {
-        accessorKey: "cost",
-        header: "Coste total",
-        cell: ({ row }) =>
-          row.original.cost == null ? (
-            <span className="text-muted-foreground">Sin datos de precio</span>
-          ) : (
-            <span className="tabular-nums">{formatMoneyEUR(row.original.cost)}</span>
-          ),
-      },
-      {
         id: "per",
-        header: "Por ración",
+        header: "Coste / ración",
         cell: ({ row }) =>
           row.original.costPerServing == null ? (
             <span className="text-muted-foreground">—</span>
           ) : (
             <span className="tabular-nums">{formatMoneyEUR(row.original.costPerServing)}</span>
           ),
+      },
+      {
+        id: "pvp",
+        header: "PVP",
+        cell: ({ row }) =>
+          row.original.selling_price == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className="tabular-nums">{formatMoneyEUR(row.original.selling_price)}</span>
+          ),
+      },
+      {
+        id: "margin",
+        header: "Margen",
+        cell: ({ row }) =>
+          row.original.grossMargin == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className="tabular-nums">{formatMoneyEUR(row.original.grossMargin)}</span>
+          ),
+      },
+      {
+        id: "fcpct",
+        header: "% coste",
+        cell: ({ row }) =>
+          row.original.foodCostPct == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className="tabular-nums">{row.original.foodCostPct.toFixed(1)} %</span>
+          ),
+      },
+      {
+        id: "status",
+        header: "Estado",
+        cell: ({ row }) => (
+          <Badge variant={statusVariant(row.original.status)} className="font-normal">
+            {row.original.statusLabel}
+          </Badge>
+        ),
       },
       {
         id: "actions",
@@ -206,12 +262,20 @@ export function RecipesClient({
                   {r.description ? (
                     <p className="text-muted-foreground line-clamp-2 text-sm">{r.description}</p>
                   ) : null}
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    {r.cost == null ? "Sin datos de precio" : formatMoneyEUR(r.cost)}
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <Badge variant={statusVariant(r.status)} className="text-xs font-normal">
+                      {r.statusLabel}
+                    </Badge>
+                  </div>
+                  <p className="text-muted-foreground text-sm tabular-nums">
+                    Coste/ración:{" "}
+                    {r.costPerServing == null ? "—" : formatMoneyEUR(r.costPerServing)}
+                    {r.selling_price != null ? ` · PVP ${formatMoneyEUR(r.selling_price)}` : ""}
                   </p>
-                  {r.costPerServing != null ? (
+                  {r.grossMargin != null ? (
                     <p className="text-muted-foreground text-sm tabular-nums">
-                      Por ración: {formatMoneyEUR(r.costPerServing)}
+                      Margen: {formatMoneyEUR(r.grossMargin)}
+                      {r.foodCostPct != null ? ` · ${r.foodCostPct.toFixed(1)} % coste` : ""}
                     </p>
                   ) : null}
                 </div>

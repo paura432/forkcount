@@ -16,6 +16,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { PurchaseDocumentType, PurchaseStatus } from "@/lib/types";
 import { parseInvoiceOcrDraft } from "@/lib/ocr-extraction";
 import { OcrReviewForm } from "../ocr-review-form";
+import { PurchaseLinesReview, type PurchaseLineReview } from "../purchase-lines-review";
+import { PurchaseItemAssociateDialog } from "../purchase-item-associate-dialog";
+import { PurchaseLineStatusBadges } from "../purchase-line-status-badges";
+import { lineNeedsOcrReview, ocrNeedsReviewByNormalizedName } from "@/lib/ocr-line-review";
 import type { Ingredient } from "@/types/ingredient";
 
 type IngredientRel = { name: string; unit: string } | { name: string; unit: string }[] | null;
@@ -137,6 +141,8 @@ export default async function PurchaseDetailPage({
     isOcrSource && p.invoice_ocr_status === "done" && ocrDraft != null && lines.length === 0;
 
   const supplier = firstRel(p.suppliers);
+  const needsReviewByName = ocrNeedsReviewByNormalizedName(p.invoice_ocr_raw);
+  const pendingCount = lines.filter((l) => !l.ingredient_id).length;
 
   let invoiceUrl: string | null = null;
   if (p.invoice_path) {
@@ -172,6 +178,15 @@ export default async function PurchaseDetailPage({
                 : "Manual"}
           </Badge>
         </div>
+        {pendingCount > 0 ? (
+          <Link
+            href={`/purchases/${p.id}/mapping`}
+            className={buttonVariants({ variant: "outline", size: "sm", className: "text-xs" })}
+          >
+            {pendingCount} producto{pendingCount === 1 ? "" : "s"} pendiente
+            {pendingCount === 1 ? "" : "s"} de asociar
+          </Link>
+        ) : null}
       </div>
 
       {(p.subtotal != null || p.tax_amount != null || p.total_amount != null) && (
@@ -234,6 +249,26 @@ export default async function PurchaseDetailPage({
         <OcrReviewForm purchaseId={p.id} draft={ocrDraft} ingredients={ingredients} />
       ) : null}
 
+      {lines.length > 0 ? (
+        <PurchaseLinesReview
+          lines={lines.map((l): PurchaseLineReview => {
+            const ing = firstRel(l.ingredients);
+            return {
+              id: l.id,
+              raw_name: l.raw_name,
+              quantity: Number(l.quantity),
+              quantity_unit: l.quantity_unit,
+              unit_price: Number(l.unit_price),
+              total_price: Number(l.total_price),
+              ingredient_id: l.ingredient_id,
+              ingredient_name: ing?.name ?? null,
+              needs_ocr_review: lineNeedsOcrReview(l.raw_name, needsReviewByName),
+            };
+          })}
+          ingredients={ingredients}
+        />
+      ) : null}
+
       <div>
         <h2 className="text-lg font-semibold">Líneas</h2>
         <p className="text-muted-foreground mt-1 text-sm tabular-nums">
@@ -262,11 +297,36 @@ export default async function PurchaseDetailPage({
               ) : (
                 lines.map((l) => {
                   const ing = firstRel(l.ingredients);
+                  const needsOcr = lineNeedsOcrReview(l.raw_name, needsReviewByName);
+                  const lineProps = {
+                    purchaseItemId: l.id,
+                    rawName: l.raw_name,
+                    quantity: Number(l.quantity),
+                    quantityUnit: l.quantity_unit,
+                    unitPrice: Number(l.unit_price),
+                    totalPrice: Number(l.total_price),
+                    ingredients,
+                  };
                   return (
                     <TableRow key={l.id}>
-                      <TableCell className="font-medium">{l.raw_name}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {ing?.name ?? "—"}
+                      <TableCell className="font-medium">
+                        <span className="flex flex-col gap-1">
+                          <span>{l.raw_name}</span>
+                          <PurchaseLineStatusBadges
+                            hasIngredient={Boolean(ing)}
+                            needsOcrReview={needsOcr}
+                          />
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {ing?.name ? (
+                          <span className="text-muted-foreground">{ing.name}</span>
+                        ) : (
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-amber-950 dark:text-amber-100">Producto sin asociar</span>
+                            <PurchaseItemAssociateDialog {...lineProps} triggerLabel="Asociar" />
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {Number(l.quantity)} {unitLabel(l.quantity_unit)}
@@ -295,13 +355,37 @@ export default async function PurchaseDetailPage({
           ) : (
             lines.map((l) => {
               const ing = firstRel(l.ingredients);
+              const needsOcr = lineNeedsOcrReview(l.raw_name, needsReviewByName);
+              const lineProps = {
+                purchaseItemId: l.id,
+                rawName: l.raw_name,
+                quantity: Number(l.quantity),
+                quantityUnit: l.quantity_unit,
+                unitPrice: Number(l.unit_price),
+                totalPrice: Number(l.total_price),
+                ingredients,
+              };
               return (
                 <Card key={l.id}>
                   <CardContent className="flex flex-col gap-1 p-4 text-sm">
                     <p className="font-medium">{l.raw_name}</p>
+                    <PurchaseLineStatusBadges
+                      hasIngredient={Boolean(ing)}
+                      needsOcrReview={needsOcr}
+                    />
                     <p className="text-muted-foreground text-xs">
-                      Catálogo: {ing?.name ?? "sin mapeo"}
-                      {ing?.unit ? ` (${unitLabel(ing.unit)})` : ""}
+                      Catálogo:{" "}
+                      {ing?.name ? (
+                        <>
+                          {ing.name}
+                          {ing.unit ? ` (${unitLabel(ing.unit)})` : ""}
+                        </>
+                      ) : (
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          <span className="text-amber-950 dark:text-amber-100">Producto sin asociar</span>
+                          <PurchaseItemAssociateDialog {...lineProps} triggerLabel="Asociar" />
+                        </span>
+                      )}
                     </p>
                     <p className="text-muted-foreground">
                       {Number(l.quantity)} {unitLabel(l.quantity_unit)}

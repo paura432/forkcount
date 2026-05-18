@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getRestaurantId } from "@/lib/auth/restaurant";
 import { purchaseLineCoherent } from "@/lib/costs";
 import { normalizePurchaseLine } from "@/lib/purchase-normalization";
+import { resolveIngredientIdsFromMappings } from "@/lib/supplier-product-mapping";
+import { fetchSupplierProductMappings } from "@/lib/supplier-product-mapping-server";
 import { parseInvoiceOcrDraft } from "@/lib/ocr-extraction";
 import { EXTRACTION_SOURCES, PURCHASE_DOCUMENT_TYPES, type ExtractionSource, type IngredientUnit } from "@/lib/types";
 import { isIngredientUnit } from "@/lib/units";
@@ -163,7 +165,25 @@ export async function createPurchase(
 
   if (pErr || !purchase) return { error: pErr?.message ?? "No se creó la compra" };
 
-  const rows = parsed.data.lines.map((l) => {
+  let linesToInsert = parsed.data.lines;
+  try {
+    const mappings = await fetchSupplierProductMappings(
+      supabase,
+      parsed.data.supplier_id,
+      parsed.data.lines.map((l) => l.raw_name),
+    );
+    linesToInsert = resolveIngredientIdsFromMappings(
+      parsed.data.lines,
+      mappings,
+      parsed.data.supplier_id,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Error al resolver mapeos";
+    await supabase.from("purchases").delete().eq("id", purchase.id);
+    return { error: msg };
+  }
+
+  const rows = linesToInsert.map((l) => {
     const norm = normalizePurchaseLine({
       quantity: l.quantity,
       quantity_unit: l.quantity_unit,
@@ -296,7 +316,7 @@ export async function confirmOcrPurchase(
 
   const { data: purchase, error: pErr } = await supabase
     .from("purchases")
-    .select("id, restaurant_id, extraction_source")
+    .select("id, restaurant_id, supplier_id, extraction_source")
     .eq("id", parsed.data.purchaseId)
     .maybeSingle();
 
@@ -308,7 +328,26 @@ export async function confirmOcrPurchase(
     return { error: "Solo compras creadas por OCR usan esta confirmación" };
   }
 
-  const rows = parsed.data.lines.map((l) => {
+  let linesToInsert = parsed.data.lines;
+  if (purchase.supplier_id) {
+    try {
+      const mappings = await fetchSupplierProductMappings(
+        supabase,
+        purchase.supplier_id,
+        parsed.data.lines.map((l) => l.raw_name),
+      );
+      linesToInsert = resolveIngredientIdsFromMappings(
+        parsed.data.lines,
+        mappings,
+        purchase.supplier_id,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error al resolver mapeos";
+      return { error: msg };
+    }
+  }
+
+  const rows = linesToInsert.map((l) => {
     const norm = normalizePurchaseLine(
       {
         quantity: l.quantity,

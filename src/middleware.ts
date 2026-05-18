@@ -7,9 +7,22 @@ function isPublicPath(pathname: string) {
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+/** PWA y estáticos en public/ — no redirigir a /login (rompe SW y manifest). */
+function isStaticPublicAsset(pathname: string) {
+  if (pathname === "/sw.js") return true;
+  if (pathname === "/manifest.webmanifest") return true;
+  if (pathname.startsWith("/icons/")) return true;
+  return false;
+}
+
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user } = await updateSession(request);
   const path = request.nextUrl.pathname;
+
+  if (isStaticPublicAsset(path)) {
+    return NextResponse.next();
+  }
+
+  const { supabaseResponse, user } = await updateSession(request);
 
   if (path === "/") {
     const url = request.nextUrl.clone();
@@ -34,6 +47,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js$|manifest\\.webmanifest$|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };
