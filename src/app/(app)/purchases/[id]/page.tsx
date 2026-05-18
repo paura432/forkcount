@@ -131,13 +131,10 @@ export default async function PurchaseDetailPage({
   const totalSum = lines.reduce((s, l) => s + Number(l.total_price), 0);
 
   const ingredients = (ingRes.data ?? []) as Ingredient[];
-  const ocrDraft =
-    p.extraction_source === "ocr" ? parseInvoiceOcrDraft(p.invoice_ocr_raw) : null;
+  const isOcrSource = p.extraction_source === "ocr" || p.extraction_source === "ocr_image";
+  const ocrDraft = isOcrSource ? parseInvoiceOcrDraft(p.invoice_ocr_raw) : null;
   const showOcrReview =
-    p.extraction_source === "ocr" &&
-    p.invoice_ocr_status === "done" &&
-    ocrDraft != null &&
-    lines.length === 0;
+    isOcrSource && p.invoice_ocr_status === "done" && ocrDraft != null && lines.length === 0;
 
   const supplier = firstRel(p.suppliers);
 
@@ -167,7 +164,12 @@ export default async function PurchaseDetailPage({
             {STATUS_LABEL[p.status]}
           </Badge>
           <Badge variant="outline" className="text-xs font-normal">
-            Origen: {p.extraction_source === "ocr" ? "OCR" : "Manual"}
+            Origen:{" "}
+            {p.extraction_source === "ocr_image"
+              ? "Foto OCR"
+              : p.extraction_source === "ocr"
+                ? "OCR"
+                : "Manual"}
           </Badge>
         </div>
       </div>

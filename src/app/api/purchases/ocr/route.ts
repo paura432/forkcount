@@ -118,14 +118,19 @@ export async function POST(request: Request) {
     });
     json = await ocrRes.json().catch(() => null);
     if (!ocrRes.ok) {
-      const rawDetail =
-        json && typeof json === "object" && json !== null && "detail" in json
-          ? (json as { detail: unknown }).detail
-          : ocrRes.statusText;
-      const detail =
-        typeof rawDetail === "string"
-          ? rawDetail
-          : JSON.stringify(rawDetail ?? "").slice(0, 2000);
+      const errObj = json && typeof json === "object" && json !== null ? (json as Record<string, unknown>) : null;
+      let detail: string;
+      if (errObj && typeof errObj.error === "string" && errObj.error.length > 0) {
+        detail = errObj.error;
+      } else if (errObj && "detail" in errObj) {
+        const rawDetail = errObj.detail;
+        detail =
+          typeof rawDetail === "string"
+            ? rawDetail
+            : JSON.stringify(rawDetail ?? "").slice(0, 2000);
+      } else {
+        detail = ocrRes.statusText;
+      }
       return NextResponse.json({ error: detail }, { status: 502 });
     }
   } catch (e) {
@@ -139,9 +144,11 @@ export async function POST(request: Request) {
   }
 
   const body: Record<string, unknown> = {
+    ok: normalized.ok,
     text: normalized.text,
     lines: normalized.lines,
     items: normalized.items,
+    document: normalized.document,
     raw_text: normalized.raw_text,
     reconstructed_lines: normalized.reconstructed_lines,
     debug: normalized.debug,

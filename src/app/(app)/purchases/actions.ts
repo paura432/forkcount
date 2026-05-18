@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getRestaurantId } from "@/lib/auth/restaurant";
 import { purchaseLineCoherent } from "@/lib/costs";
 import { normalizePurchaseLine } from "@/lib/purchase-normalization";
-import { EXTRACTION_SOURCES, PURCHASE_DOCUMENT_TYPES, type IngredientUnit } from "@/lib/types";
+import { parseInvoiceOcrDraft } from "@/lib/ocr-extraction";
+import { EXTRACTION_SOURCES, PURCHASE_DOCUMENT_TYPES, type ExtractionSource, type IngredientUnit } from "@/lib/types";
 import { isIngredientUnit } from "@/lib/units";
 
 /** Tolerancia € para cantidad × precio unitario en compras OCR (redondeo / heurísticas). */
@@ -55,6 +56,14 @@ function roundNormalizedUnitPrice(v: number): number {
 function safeFileName(name: string): string {
   const base = name.replace(/[^\w.\-]+/g, "_").slice(0, 180);
   return base || "factura";
+}
+
+function parseExtractionSource(raw: FormDataEntryValue | null): ExtractionSource {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  if ((EXTRACTION_SOURCES as readonly string[]).includes(v)) {
+    return v as ExtractionSource;
+  }
+  return "manual";
 }
 
 export async function createPurchase(
@@ -116,6 +125,22 @@ export async function createPurchase(
   const restaurant_id = await getRestaurantId();
   const supabase = await createClient();
 
+  const extraction_source = parseExtractionSource(formData.get("extraction_source"));
+  let invoice_ocr_raw: unknown = null;
+  let invoice_ocr_status: "skipped" | "done" = "skipped";
+  const ocrRawField = formData.get("invoice_ocr_raw");
+  if (typeof ocrRawField === "string" && ocrRawField.trim()) {
+    try {
+      const draft = parseInvoiceOcrDraft(JSON.parse(ocrRawField));
+      if (draft) {
+        invoice_ocr_raw = draft;
+        invoice_ocr_status = "done";
+      }
+    } catch {
+      return { error: "Datos OCR inválidos" };
+    }
+  }
+
   const { data: purchase, error: pErr } = await supabase
     .from("purchases")
     .insert({
@@ -128,7 +153,9 @@ export async function createPurchase(
       tax_amount,
       total_amount,
       status: parsed.data.status,
-      extraction_source: EXTRACTION_SOURCES[0],
+      extraction_source,
+      invoice_ocr_raw,
+      invoice_ocr_status,
       notes: parsed.data.notes?.trim() || null,
     })
     .select("id")
@@ -208,9 +235,13 @@ const confirmOcrLineSchema = z.object({
 const confirmOcrSchema = z.object({
   purchaseId: z.string().uuid(),
   status: z.enum(["confirmed", "pending_review"]),
+  document_number: z.string().optional(),
+  purchase_date: z.string().optional(),
+  notes: z.string().optional(),
   subtotal: z.coerce.number().nonnegative().optional().nullable(),
   tax_amount: z.coerce.number().nonnegative().optional().nullable(),
   total_amount: z.coerce.number().nonnegative().optional().nullable(),
+  invoice_ocr_raw: z.unknown().optional(),
   lines: z.array(confirmOcrLineSchema).min(1, "Añade al menos una línea"),
 });
 
@@ -273,7 +304,7 @@ export async function confirmOcrPurchase(
   if (purchase.restaurant_id !== restaurant_id) {
     return { error: "No autorizado" };
   }
-  if (purchase.extraction_source !== "ocr") {
+  if (purchase.extraction_source !== "ocr" && purchase.extraction_source !== "ocr_image") {
     return { error: "Solo compras creadas por OCR usan esta confirmación" };
   }
 
@@ -304,14 +335,36 @@ export async function confirmOcrPurchase(
   const { error: iErr } = await supabase.from("purchase_items").insert(rows);
   if (iErr) return { error: iErr.message };
 
+  let invoice_ocr_raw: unknown = undefined;
+  if (parsed.data.invoice_ocr_raw != null) {
+    const draft = parseInvoiceOcrDraft(parsed.data.invoice_ocr_raw);
+    if (!draft) return { error: "Datos OCR inválidos" };
+    invoice_ocr_raw = draft;
+  }
+
+  const purchasePatch: Record<string, unknown> = {
+    subtotal,
+    tax_amount,
+    total_amount,
+    status: parsed.data.status,
+  };
+  if (parsed.data.document_number !== undefined) {
+    purchasePatch.document_number = parsed.data.document_number.trim() || null;
+  }
+  if (parsed.data.purchase_date?.trim()) {
+    purchasePatch.purchase_date = parsed.data.purchase_date.trim();
+  }
+  if (parsed.data.notes !== undefined) {
+    purchasePatch.notes = parsed.data.notes.trim() || null;
+  }
+  if (invoice_ocr_raw !== undefined) {
+    purchasePatch.invoice_ocr_raw = invoice_ocr_raw;
+    purchasePatch.invoice_ocr_status = "done";
+  }
+
   const { error: uErr } = await supabase
     .from("purchases")
-    .update({
-      subtotal,
-      tax_amount,
-      total_amount,
-      status: parsed.data.status,
-    })
+    .update(purchasePatch)
     .eq("id", parsed.data.purchaseId);
 
   if (uErr) return { error: uErr.message };

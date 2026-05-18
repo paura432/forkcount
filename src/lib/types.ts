@@ -13,7 +13,7 @@ export type PurchaseDocumentType = (typeof PURCHASE_DOCUMENT_TYPES)[number];
 export const PURCHASE_STATUSES = ["draft", "pending_review", "confirmed"] as const;
 export type PurchaseStatus = (typeof PURCHASE_STATUSES)[number];
 
-export const EXTRACTION_SOURCES = ["manual", "ocr"] as const;
+export const EXTRACTION_SOURCES = ["manual", "ocr", "ocr_image"] as const;
 export type ExtractionSource = (typeof EXTRACTION_SOURCES)[number];
 
 export type Restaurant = {
