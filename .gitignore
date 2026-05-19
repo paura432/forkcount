@@ -41,6 +41,7 @@ Untitled
 
 # supabase CLI temp
 supabase/.temp/
+supabase/.branches/
 
 # python (global + OCR service)
 .venv/
